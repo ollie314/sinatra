@@ -1,3 +1,5 @@
+# frozen_string_literal: true
+
 # external dependencies
 require 'rack'
 require 'tilt'
@@ -150,7 +152,7 @@ module Sinatra
       if calculate_content_length?
         # if some other code has already set Content-Length, don't muck with it
         # currently, this would be the static file-handler
-        headers["Content-Length"] = body.inject(0) { |l, p| l + Rack::Utils.bytesize(p) }.to_s
+        headers["Content-Length"] = body.inject(0) { |l, p| l + p.bytesize }.to_s
       end
 
       [status.to_i, headers, result]
@@ -239,7 +241,11 @@ module Sinatra
         def block.each; yield(call) end
         response.body = block
       elsif value
-        headers.delete 'Content-Length' unless request.head? || value.is_a?(Rack::File) || value.is_a?(Stream)
+        # Rack 2.0 returns a Rack::File::Iterator here instead of
+        # Rack::File as it was in the previous API.
+        unless request.head? || value.is_a?(Rack::File::Iterator) || value.is_a?(Stream)
+          headers.delete 'Content-Length'
+        end
         response.body = value
       else
         response.body
@@ -264,7 +270,7 @@ module Sinatra
     # Takes Rack routers and reverse proxies into account.
     def uri(addr = nil, absolute = true, add_script_name = true)
       return addr if addr =~ /\A[A-z][A-z0-9\+\.\-]*:/
-      uri = [host = ""]
+      uri = [host = String.new]
       if absolute
         host << "http#{'s' if request.secure?}://"
         if request.forwarded? or request.port != (request.secure? ? 443 : 80)
@@ -338,7 +344,7 @@ module Sinatra
 
     # Set the Content-Disposition to "attachment" with the specified filename,
     # instructing the user agents to prompt to save.
-    def attachment(filename = nil, disposition = 'attachment')
+    def attachment(filename = nil, disposition = :attachment)
       response['Content-Disposition'] = disposition.to_s
       if filename
         params = '; filename="%s"' % File.basename(filename)
@@ -356,19 +362,19 @@ module Sinatra
 
       disposition = opts[:disposition]
       filename    = opts[:filename]
-      disposition = 'attachment' if disposition.nil? and filename
-      filename    = path         if filename.nil?
+      disposition = :attachment if disposition.nil? and filename
+      filename    = path        if filename.nil?
       attachment(filename, disposition) if disposition
 
       last_modified opts[:last_modified] if opts[:last_modified]
 
-      file      = Rack::File.new nil
-      file.path = path
-      result    = file.serving env
+      file   = Rack::File.new(File.dirname(settings.app_file))
+      result = file.serving(request, path)
+
       result[1].each { |k,v| headers[k] ||= v }
       headers['Content-Length'] = result[1]['Content-Length']
       opts[:status] &&= Integer(opts[:status])
-      halt opts[:status] || result[0], result[2]
+      halt (opts[:status] || result[0]), result[2]
     rescue Errno::ENOENT
       not_found
     end
@@ -440,7 +446,7 @@ module Sinatra
     # Specify response freshness policy for HTTP caches (Cache-Control header).
     # Any number of non-value directives (:public, :private, :no_cache,
     # :no_store, :must_revalidate, :proxy_revalidate) may be passed along with
-    # a Hash of value directives (:max_age, :min_stale, :s_max_age).
+    # a Hash of value directives (:max_age, :min_stale, :s_maxage).
     #
     #   cache_control :public, :must_revalidate, :max_age => 60
     #   => Cache-Control: public, must-revalidate, max-age=60
@@ -459,7 +465,7 @@ module Sinatra
       values.map! { |value| value.to_s.tr('_','-') }
       hash.each do |key, value|
         key = key.to_s.tr('_', '-')
-        value = value.to_i if key == "max-age"
+        value = value.to_i if ['max-age', 's-maxage'].include? key
         values << "#{key}=#{value}"
       end
 
@@ -592,22 +598,12 @@ module Sinatra
     # Generates a Time object from the given value.
     # Used by #expires and #last_modified.
     def time_for(value)
-      if value.respond_to? :to_time
-        value.to_time
-      elsif value.is_a? Time
-        value
-      elsif value.respond_to? :new_offset
-        # DateTime#to_time does the same on 1.9
-        d = value.new_offset 0
-        t = Time.utc d.year, d.mon, d.mday, d.hour, d.min, d.sec + d.sec_fraction
-        t.getlocal
-      elsif value.respond_to? :mday
-        # Date#to_time does the same on 1.9
-        Time.local(value.year, value.mon, value.mday)
-      elsif value.is_a? Numeric
+      if value.is_a? Numeric
         Time.at value
-      else
+      elsif value.respond_to? :to_s
         Time.parse value.to_s
+      else
+        value.to_time
       end
     rescue ArgumentError => boom
       raise boom
@@ -877,7 +873,7 @@ module Sinatra
     include Helpers
     include Templates
 
-    URI_INSTANCE = URI.const_defined?(:Parser) ? URI::Parser.new : URI
+    URI_INSTANCE = URI::Parser.new
 
     attr_accessor :app, :env, :request, :response, :params
     attr_reader   :template_cache
@@ -1013,6 +1009,9 @@ module Sinatra
         conditions.each { |c| throw :pass if c.bind(self).call == false }
         block ? block[self, values] : yield(self, values)
       end
+    rescue
+      @env['sinatra.error.params'] = @params
+      raise
     ensure
       @params = original if original
     end
@@ -1064,6 +1063,7 @@ module Sinatra
     # Run the block with 'throw :halt' support and apply result to the response.
     def invoke
       res = catch(:halt) { yield }
+
       res = [res] if Fixnum === res or String === res
       if Array === res and Fixnum === res.first
         res = res.dup
@@ -1095,6 +1095,9 @@ module Sinatra
 
     # Error handling during requests.
     def handle_exception!(boom)
+      if error_params = @env['sinatra.error.params']
+        @params = @params.merge(error_params)
+      end
       @env['sinatra.error'] = boom
 
       if boom.respond_to? :http_status
@@ -1254,13 +1257,13 @@ module Sinatra
         args  = compile! "ERROR", //, block
         codes = codes.map { |c| Array(c) }.flatten
         codes << Exception if codes.empty?
+        codes << Sinatra::NotFound if codes.include?(404)
         codes.each { |c| (@errors[c] ||= []) << args }
       end
 
       # Sugar for `error(404) { ... }`
       def not_found(&block)
         error(404, &block)
-        error(Sinatra::NotFound, &block)
       end
 
       # Define a named template. The block must return the template source.
@@ -1298,7 +1301,7 @@ module Sinatra
           data.each_line do |line|
             lines += 1
             if line =~ /^@@\s*(.*\S)\s*$/
-              template = force_encoding('', encoding)
+              template = force_encoding(String.new, encoding)
               templates[$1.to_sym] = [template, file, lines]
             elsif template
               template << line
@@ -1533,8 +1536,7 @@ module Sinatra
 
       # Dynamically defines a method on settings.
       def define_singleton(name, content = Proc.new)
-        # replace with call to singleton_class once we're 1.9 only
-        (class << self; self; end).class_eval do
+        singleton_class.class_eval do
           undef_method(name) if method_defined? name
           String === content ? class_eval("def #{name}() #{content}; end") : define_method(name, &content)
         end
@@ -1631,7 +1633,7 @@ module Sinatra
               ignore << escaped(c).join if c.match(/[\.@]/)
               patt = encoded(c)
               patt.gsub(/%[\da-fA-F]{2}/) do |match|
-                match.split(//).map! {|char| char =~ /[A-Z]/ ? "[#{char}#{char.tr('A-Z', 'a-z')}]" : char}.join
+                match.split(//).map! { |char| char == char.downcase ? char : "[#{char}#{char.downcase}]" }.join
               end
             end
 
@@ -1690,10 +1692,7 @@ module Sinatra
         end
         unsafe_patterns = unsafe_ignore.map! do |unsafe|
           chars = unsafe.split(//).map! do |char|
-            if char =~ /[A-Z]/
-              char <<= char.tr('A-Z', 'a-z')
-            end
-            char
+            char == char.downcase ? char : char + char.downcase
           end
 
           "|(?:%[^#{chars[0]}].|%[#{chars[0]}][^#{chars[1]}])"
@@ -1936,7 +1935,7 @@ module Sinatra
             </style>
           </head>
           <body>
-            <h2>Sinatra doesn&rsquo;t know this ditty.</h2>
+            <h2>Sinatra doesn’t know this ditty.</h2>
             <img src='#{uri "/__sinatra__/404.png"}'>
             <div id="c">
               Try this:
