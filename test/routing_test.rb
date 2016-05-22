@@ -6,19 +6,13 @@ def route_def(pattern)
   mock_app { get(pattern) { } }
 end
 
-class RegexpLookAlike
-  class MatchData
-    def captures
-      ["this", "is", "a", "test"]
-    end
+class PatternLookAlike
+  def to_pattern(*)
+    self
   end
 
-  def match(string)
-    ::RegexpLookAlike::MatchData.new if string == "/this/is/a/test/"
-  end
-
-  def keys
-    ["one", "two", "three", "four"]
+  def params(input)
+    { "one" => "this", "two" => "is", "three" => "a", "four" => "test" }
   end
 end
 
@@ -51,6 +45,16 @@ class RoutingTest < Minitest::Test
     assert response.ok?
     assert_equal 'World!', response['X-Hello']
     assert_equal '', response.body
+  end
+
+  it "400s when request params contain conflicting types" do
+    mock_app {
+      get('/foo') { }
+    }
+
+    request = Rack::MockRequest.new(@app)
+    response = request.request('GET', '/foo?bar=&bar[]=', {})
+    assert response.bad_request?
   end
 
   it "404s when no route satisfies the request" do
@@ -101,11 +105,11 @@ class RoutingTest < Minitest::Test
 
   it "it handles encoded colons correctly" do
     mock_app {
-      get("/:") { 'a' }
-      get("/a/:") { 'b' }
-      get("/a/:/b") { 'c' }
-      get("/a/b:") { 'd' }
-      get("/a/b: ") { 'e' }
+      get("/\\:") { 'a' }
+      get("/a/\\:") { 'b' }
+      get("/a/\\:/b") { 'c' }
+      get("/a/b\\:") { 'd' }
+      get("/a/b\\: ") { 'e' }
     }
     get '/:'
     assert_equal 200, status
@@ -430,8 +434,8 @@ class RoutingTest < Minitest::Test
     assert_equal 'bob+ross', body
   end
 
-  it "literally matches parens in paths" do
-    route_def '/test(bar)/'
+  it "literally matches parens in paths when escaped" do
+    route_def '/test\(bar\)/'
 
     get '/test(bar)/'
     assert ok?
@@ -599,7 +603,7 @@ class RoutingTest < Minitest::Test
 
   it 'supports regular expression look-alike routes' do
     mock_app {
-      get(RegexpLookAlike.new) do
+      get(PatternLookAlike.new) do
         assert_equal 'this', params[:one]
         assert_equal 'is', params[:two]
         assert_equal 'a', params[:three]
@@ -1435,7 +1439,7 @@ class RoutingTest < Minitest::Test
     end
 
     assert_equal Array, signature.class
-    assert_equal 4, signature.length
+    assert_equal 3, signature.length
     assert list.include?(signature)
   end
 
@@ -1447,5 +1451,24 @@ class RoutingTest < Minitest::Test
       get('/users/:id/status') { 'ok' }
     end
     get '/users/1/status'
+  end
+
+  it 'treats routes with and without trailing slashes differently' do
+    mock_app do
+      get '/foo' do
+        'Foo'
+      end
+
+      get '/foo/' do
+        'Foo with a slash'
+      end
+    end
+
+    get '/foo'
+    assert_equal 'Foo', body
+    refute_equal 'Foo with a slash', body
+
+    get '/foo/'
+    assert_equal 'Foo with a slash', body
   end
 end

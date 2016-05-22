@@ -160,6 +160,14 @@ end
 Routes are matched in the order they are defined. The first route that
 matches the request is invoked.
 
+Routes with trailing slashes are different from the ones without:
+
+```ruby
+    get '/foo' do
+      # Does not match "GET /foo/"
+    end
+```
+
 Route patterns may include named parameters, accessible via the
 `params` hash:
 
@@ -535,6 +543,14 @@ end
 ```
 
 Renders the template string.
+You can optionally specify `:path` and `:line` for a clearer backtrace if there is
+a filesystem path or line associated with that string:
+
+```ruby
+get '/' do
+  haml '%div.title Hello World', :path => 'examples/file.haml', :line => 3
+end
+```
 
 ### Available Template Languages
 
@@ -1580,6 +1596,10 @@ post '/:message' do
   "message received"
 end
 ```
+
+It's also possible for the client to close the connection when trying to write
+to the socket. Because of this, it's recommended to check `out.closed?` before
+trying to write.
 
 ### Logging
 

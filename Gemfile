@@ -14,6 +14,7 @@ gem 'rake'
 gem 'rack', github: 'rack/rack'
 gem 'rack-test', '>= 0.6.2'
 gem "minitest", "~> 5.0"
+gem 'tool', '~> 0.2'
 
 if RUBY_ENGINE == 'jruby'
   gem 'nokogiri', '!= 1.5.0'
@@ -22,17 +23,13 @@ end
 
 if RUBY_ENGINE == "ruby"
   gem 'less', '~> 2.0'
-  gem 'therubyracer'
+  gem 'mini_racer'
   gem 'redcarpet'
   gem 'wlang', '>= 2.0.1'
   gem 'bluecloth'
   gem 'rdiscount'
   gem 'RedCloth'
   gem 'puma'
-  #TODO: remove explicit require once net-http-server does it
-  #(apparently it was shipped w/ stdlib in Rubies < 2.2.2)
-  gem 'gserver'
-  gem 'net-http-server'
   gem 'yajl-ruby'
   gem 'nokogiri'
   gem 'thin'
@@ -54,6 +51,7 @@ if RUBY_ENGINE == "ruby"
   gem 'haml', '>= 3.0'
   gem 'sass'
   gem 'reel-rack'
+  gem 'celluloid', '~> 0.16.0'
 end
 
 if RUBY_ENGINE == "rbx"
