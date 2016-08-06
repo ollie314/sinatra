@@ -2,27 +2,35 @@
 language: ruby
 
 dist: trusty
-sudo: true
+sudo: false
 
 before_install:
   - rvm get head
   - gem install bundler
+  - export CXX="g++-4.8"
+
+addons:
+ apt:
+  sources:
+  - ubuntu-toolchain-r-test
+  packages:
+  - g++-4.8
 
 rvm:
   - 2.2.4
   - 2.3.1
   - ruby-head
-  - rbx-2
+  - rbx
   - jruby-9.1.0.0
   - jruby-head
 
-sudo: false
+script: ./.travis.sh
 
 matrix:
   allow_failures:
     - rvm: ruby-head
     - rvm: jruby-head
-    - rvm: rbx-2
+    - rvm: rbx
 
 notifications:
   recipients:

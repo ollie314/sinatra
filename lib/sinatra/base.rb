@@ -491,7 +491,7 @@ module Sinatra
     # "values" arguments are passed to the #cache_control helper:
     #
     #   expires 500, :public, :must_revalidate
-    #   => Cache-Control: public, must-revalidate, max-age=60
+    #   => Cache-Control: public, must-revalidate, max-age=500
     #   => Expires: Mon, 08 Jun 2009 08:50:17 GMT
     #
     def expires(amount, *values)
@@ -1451,7 +1451,7 @@ module Sinatra
         return unless running?
         # Use Thin's hard #stop! if available, otherwise just #stop.
         running_server.respond_to?(:stop!) ? running_server.stop! : running_server.stop
-        $stderr.puts "== Sinatra has ended his set (crowd applauds)" unless handler_name =~/cgi/i
+        $stderr.puts "== Sinatra has ended his set (crowd applauds)" unless supress_messages?
         set :running_server, nil
         set :handler_name, nil
       end
@@ -1533,7 +1533,7 @@ module Sinatra
       # Starts the server by running the Rack Handler.
       def start_server(handler, server_settings, handler_name)
         handler.run(self, server_settings) do |server|
-          unless handler_name =~ /cgi/i
+          unless supress_messages?
             $stderr.puts "== Sinatra (v#{Sinatra::VERSION}) has taken the stage on #{port} for #{environment} with backup from #{handler_name}"
           end
 
@@ -1544,6 +1544,10 @@ module Sinatra
 
           yield server if block_given?
         end
+      end
+
+      def supress_messages?
+        handler_name =~ /cgi/i || quiet
       end
 
       def setup_traps
@@ -1687,10 +1691,16 @@ module Sinatra
       def setup_protection(builder)
         return unless protection?
         options = Hash === protection ? protection.dup : {}
-        protect_session  = options.fetch(:session) { sessions? }
-        options[:except] = Array options[:except]
-        options[:except] += [:session_hijacking, :remote_token] unless protect_session
+        options = {
+          img_src:  "'self' data:",
+          font_src: "'self'"
+        }.merge options
+
+        protect_session = options.fetch(:session) { sessions? }
+        options[:without_session] = !protect_session
+
         options[:reaction] ||= :drop_session
+
         builder.use Rack::Protection, options
       end
 
@@ -1801,6 +1811,7 @@ module Sinatra
     set :server, %w[HTTP webrick]
     set :bind, Proc.new { development? ? 'localhost' : '0.0.0.0' }
     set :port, Integer(ENV['PORT'] && !ENV['PORT'].empty? ? ENV['PORT'] : 4567)
+    set :quiet, false
 
     ruby_engine = defined?(RUBY_ENGINE) && RUBY_ENGINE
 
