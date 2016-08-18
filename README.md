@@ -75,6 +75,7 @@ pick up if available.
     * [Filters](#filters)
     * [Helpers](#helpers)
         * [Using Sessions](#using-sessions)
+        	* [Choosing Your Own Session Middleware](#choosing-your-own-session-middleware)
         * [Halting](#halting)
         * [Passing](#passing)
         * [Triggering Another Route](#triggering-another-route)
@@ -1377,24 +1378,6 @@ get '/:value' do
 end
 ```
 
-Note that `enable :sessions` actually stores all data in a cookie. This
-might not always be what you want (storing lots of data will increase your
-traffic, for instance). You can use any Rack session middleware: in order to
-do so, do **not** call `enable :sessions`, but instead pull in your
-middleware of choice as you would any other middleware:
-
-```ruby
-use Rack::Session::Pool, :expire_after => 2592000
-
-get '/' do
-  "value = " << session[:value].inspect
-end
-
-get '/:value' do
-  session['value'] = params['value']
-end
-```
-
 To improve security, the session data in the cookie is signed with a session
 secret. A random secret is generated for you by Sinatra. However, since this
 secret will change with every start of your application, you might want to
@@ -1417,6 +1400,40 @@ domain with a *.* like this instead:
 ```ruby
 set :sessions, :domain => '.foo.com'
 ```
+
+#### Choosing Your Own Session Middleware
+
+Note that `enable :sessions` actually stores all data in a cookie. This
+might not always be what you want (storing lots of data will increase your
+traffic, for instance). You can use any Rack session middleware: in order to
+do so, one of the following methods can be used:
+
+```ruby
+enable :sessions
+set :session_store, Rack::Session::Pool
+```
+
+Or to set up sessions with a hash of options:
+
+```ruby
+set :sessions, :expire_after => 2592000
+set :session_store, Rack::Session::Pool
+```
+
+Another option is to **not** call `enable :sessions`, but instead pull in your
+middleware of choice as you would any other middleware.
+
+It is important to note that when using this method, session based protection **will not be enabled by default**.
+
+The Rack middleware to do that will also need to be added:
+
+```ruby
+use Rack::Session::Pool, :expire_after => 2592000
+use Rack::Protection::RemoteToken
+use Rack::Protection::SessionHijacking
+```
+
+See 'Configuring attack protection' for more information.
 
 ### Halting
 
@@ -2043,7 +2060,7 @@ configure do
 end
 ```
 
-Run only when the environment (`RACK_ENV` environment variable) is set to
+Run only when the environment (`APP_ENV` environment variable) is set to
 `:production`:
 
 ```ruby
@@ -2098,12 +2115,12 @@ set :protection, :except => [:path_traversal, :session_hijacking]
 ```
 
 By default, Sinatra will only set up session based protection if `:sessions`
-has been enabled. Sometimes you want to set up sessions on your own, though. In
-that case you can get it to set up session based protections by passing the
-`:session` option:
+have been enabled. See 'Using Sessions'. Sometimes you may want to set up
+sessions "outside" of the Sinatra app, such as in the config.ru or with a
+separate Rack::Builder instance. In that case you can still set up session
+based protection by passing the `:session` option:
 
 ```ruby
-use Rack::Session::Pool
 set :protection, :session => true
 ```
 
@@ -2148,7 +2165,7 @@ set :protection, :session => true
 
   <dt>environment</dt>
   <dd>
-    Current environment. Defaults to <tt>ENV['RACK_ENV']</tt>, or
+    Current environment. Defaults to <tt>ENV['APP_ENV']</tt>, or
     <tt>"development"</tt> if not available.
   </dd>
 
@@ -2236,6 +2253,9 @@ set :protection, :session => true
     See 'Using Sessions' section for more information.
   </dd>
 
+  <dt>session_store</dt>
+  <dd>The Rack session middleware used. Defaults to <tt>Rack::Session::Cookie</tt>. See 'Using Sessions' section for more information.</dd>
+
   <dt>show_exceptions</dt>
   <dd>
     Show a stack trace in the browser when an exception happens. Enabled by
@@ -2291,16 +2311,16 @@ set :protection, :session => true
 ## Environments
 
 There are three predefined `environments`: `"development"`, `"production"` and
-`"test"`. Environments can be set through the `RACK_ENV` environment variable.
+`"test"`. Environments can be set through the `APP_ENV` environment variable.
 The default value is `"development"`. In the `"development"` environment all
 templates are reloaded between requests, and special `not_found` and `error`
 handlers display stack traces in your browser. In the `"production"` and
 `"test"` environments, templates are cached by default.
 
-To run different environments, set the `RACK_ENV` environment variable:
+To run different environments, set the `APP_ENV` environment variable:
 
 ```shell
-RACK_ENV=production ruby my_app.rb
+APP_ENV=production ruby my_app.rb
 ```
 
 You can use predefined methods: `development?`, `test?` and `production?` to
@@ -2469,7 +2489,7 @@ class MyAppTest < Minitest::Test
     assert_equal 'Hello Frank!', last_response.body
   end
 
-  def test_with_rack_env
+  def test_with_user_agent
     get '/', {}, 'HTTP_USER_AGENT' => 'Songbird'
     assert_equal "You're using Songbird!", last_response.body
   end
